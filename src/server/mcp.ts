@@ -15,14 +15,10 @@ export interface ToolConfig {
 
 export class MCP {
 	private server: McpServer;
-	private transport: StreamableHTTPServerTransport;
-	private connected = false;
+	private transports: Map<string, StreamableHTTPServerTransport> = new Map();
+	private connectedTransports: Set<string> = new Set();
 
 	constructor() {
-		this.transport = new StreamableHTTPServerTransport({
-			sessionIdGenerator: () => randomUUID(),
-		});
-
 		this.server = new McpServer({
 			name: "express-mcp-server",
 			version: "1.0.0",
@@ -46,15 +42,38 @@ export class MCP {
 		);
 	}
 
+	private getOrCreateTransport(sessionId: string): StreamableHTTPServerTransport {
+		if (!this.transports.has(sessionId)) {
+			const transport = new StreamableHTTPServerTransport({
+				sessionIdGenerator: () => sessionId,
+			});
+			this.transports.set(sessionId, transport);
+		}
+		return this.transports.get(sessionId)!;
+	}
+
+	private async connectTransport(transport: StreamableHTTPServerTransport, sessionId: string): Promise<void> {
+		if (!this.connectedTransports.has(sessionId)) {
+			await this.server.connect(transport);
+			this.connectedTransports.add(sessionId);
+		}
+	}
+
 	async handleRequest(
 		req: IncomingMessage,
 		res: ServerResponse,
 		body?: unknown,
 	): Promise<void> {
-		if (!this.connected) {
-			await this.server.connect(this.transport);
-			this.connected = true;
-		}
-		await this.transport.handleRequest(req, res, body);
+		// Extract session ID from headers if available
+		const sessionId = (req.headers["mcp-session-id"] as string) || randomUUID();
+
+		// Get or create transport for this session
+		const transport = this.getOrCreateTransport(sessionId);
+
+		// Connect transport to server if not already connected
+		await this.connectTransport(transport, sessionId);
+
+		// Handle the request
+		await transport.handleRequest(req, res, body);
 	}
 }
