@@ -13,50 +13,50 @@ export interface ToolConfig {
 	handler: ToolHandler;
 }
 
+interface SessionState {
+	transport: StreamableHTTPServerTransport;
+	server: McpServer;
+}
+
 export class MCP {
-	private server: McpServer;
-	private transports: Map<string, StreamableHTTPServerTransport> = new Map();
-	private connectedTransports: Set<string> = new Set();
+	private toolConfigs: ToolConfig[] = [];
+	private sessions: Map<string, SessionState> = new Map();
 
 	constructor() {
-		this.server = new McpServer({
-			name: "express-mcp-server",
-			version: "1.0.0",
-		});
+		// No longer create a single shared server
+		// Each session will get its own server instance
 	}
 
 	registerTool(config: ToolConfig): void {
-		this.server.registerTool(
-			config.name,
-			{
-				title: config.name,
-				description: config.description,
-				inputSchema: config.inputSchema,
-			},
-			async (args) => {
-				const result = await config.handler(args as Record<string, unknown>);
-				return {
-					content: [{ type: "text" as const, text: result }],
-				};
-			},
-		);
+		// Store tool configs to register them on each new server instance
+		this.toolConfigs.push(config);
 	}
 
-	private getOrCreateTransport(sessionId: string): StreamableHTTPServerTransport {
-		if (!this.transports.has(sessionId)) {
-			const transport = new StreamableHTTPServerTransport({
-				sessionIdGenerator: () => sessionId,
-			});
-			this.transports.set(sessionId, transport);
-		}
-		return this.transports.get(sessionId)!;
-	}
+	private createAndConfigureServer(): McpServer {
+		const server = new McpServer({
+			name: "express-mcp-server",
+			version: "1.0.0",
+		});
 
-	private async connectTransport(transport: StreamableHTTPServerTransport, sessionId: string): Promise<void> {
-		if (!this.connectedTransports.has(sessionId)) {
-			await this.server.connect(transport);
-			this.connectedTransports.add(sessionId);
+		// Register all tools on this server instance
+		for (const config of this.toolConfigs) {
+			server.registerTool(
+				config.name,
+				{
+					title: config.name,
+					description: config.description,
+					inputSchema: config.inputSchema,
+				},
+				async (args) => {
+					const result = await config.handler(args as Record<string, unknown>);
+					return {
+						content: [{ type: "text" as const, text: result }],
+					};
+				},
+			);
 		}
+
+		return server;
 	}
 
 	async handleRequest(
@@ -65,15 +65,45 @@ export class MCP {
 		body?: unknown,
 	): Promise<void> {
 		// Extract session ID from headers if available
-		const sessionId = (req.headers["mcp-session-id"] as string) || randomUUID();
+		const sessionId = req.headers["mcp-session-id"] as string;
 
-		// Get or create transport for this session
-		const transport = this.getOrCreateTransport(sessionId);
+		if (sessionId && this.sessions.has(sessionId)) {
+			// Reuse existing session with existing transport and server
+			const { transport } = this.sessions.get(sessionId)!;
+			await transport.handleRequest(req, res, body);
+		} else {
+			// Create new session with its own server and transport
+			const server = this.createAndConfigureServer();
+			const transport = new StreamableHTTPServerTransport({
+				sessionIdGenerator: () => randomUUID(),
+				onsessioninitialized: (newSessionId: string) => {
+					console.log(`Session initialized: ${newSessionId}`);
+					// Store the transport when session is initialized to avoid race conditions
+					const sessionState: SessionState = { transport, server };
+					this.sessions.set(newSessionId, sessionState);
+				},
+				onsessionclosed: (closedSessionId: string) => {
+					console.log(`Session closed: ${closedSessionId}`);
+					// Clean up the session
+					this.sessions.delete(closedSessionId);
+				},
+			});
 
-		// Connect transport to server if not already connected
-		await this.connectTransport(transport, sessionId);
+			// Connect this transport to its own server
+			// This is safe because we only have one transport per server
+			await server.connect(transport);
 
-		// Handle the request
-		await transport.handleRequest(req, res, body);
+			// Handle the request
+			await transport.handleRequest(req, res, body);
+		}
+	}
+
+	// Optional: Method to explicitly close a session
+	async closeSession(sessionId: string): Promise<void> {
+		const sessionState = this.sessions.get(sessionId);
+		if (sessionState) {
+			await sessionState.server.close();
+			this.sessions.delete(sessionId);
+		}
 	}
 }
