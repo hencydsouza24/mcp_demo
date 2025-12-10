@@ -4,12 +4,11 @@ import type { MCP } from "../server/mcp";
 export function createMCPRouter(mcp: MCP): Router {
 	const router = Router();
 
-	router.post("/", async (req: Request, res: Response) => {
+	const handleRequest = async (req: Request, res: Response) => {
 		try {
 			await mcp.handleRequest(req, res, req.body);
 		} catch (error) {
-			const err = error as Error;
-			console.error("MCP request error:", err);
+			console.error("MCP request error:", error);
 			if (!res.headersSent) {
 				res.status(500).json({
 					jsonrpc: "2.0",
@@ -18,42 +17,14 @@ export function createMCPRouter(mcp: MCP): Router {
 				});
 			}
 		}
-	});
+	};
 
-	router.get("/", async (req: Request, res: Response) => {
-		try {
-			await mcp.handleRequest(req, res);
-		} catch (error) {
-			const err = error as Error;
-			console.error("MCP GET error:", err);
-			if (!res.headersSent) {
-				res.status(500).json({
-					jsonrpc: "2.0",
-					error: { code: -32603, message: "Internal server error" },
-					id: null,
-				});
-			}
-		}
-	});
-
-	router.delete("/", async (req: Request, res: Response) => {
-		try {
-			await mcp.handleRequest(req, res);
-		} catch (error) {
-			const err = error as Error;
-			console.error("MCP DELETE error:", err);
-			if (!res.headersSent) {
-				res.status(500).json({
-					jsonrpc: "2.0",
-					error: { code: -32603, message: "Internal server error" },
-					id: null,
-				});
-			}
-		}
-	});
+	router.post("/", handleRequest);
+	router.get("/", handleRequest);
+	router.delete("/", handleRequest);
 
 	router.get("/health", (_req: Request, res: Response) => {
-		res.json({ status: "ok", message: "MCP server is running" });
+		res.json({ status: "ok" });
 	});
 
 	router.get("/info", (_req: Request, res: Response) => {

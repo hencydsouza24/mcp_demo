@@ -10,8 +10,7 @@ export const tools: ToolConfig[] = [
 			b: z.number().describe("Second number"),
 		},
 		handler: async (args) => {
-			const a = args.a as number;
-			const b = args.b as number;
+			const { a, b } = args as { a: number; b: number };
 			return `${a} + ${b} = ${a + b}`;
 		},
 	},
@@ -23,8 +22,7 @@ export const tools: ToolConfig[] = [
 			y: z.number().describe("Second number"),
 		},
 		handler: async (args) => {
-			const x = args.x as number;
-			const y = args.y as number;
+			const { x, y } = args as { x: number; y: number };
 			return `${x} * ${y} = ${x * y}`;
 		},
 	},
@@ -35,7 +33,7 @@ export const tools: ToolConfig[] = [
 			message: z.string().describe("Message to echo"),
 		},
 		handler: async (args) => {
-			const message = args.message as string;
+			const { message } = args as { message: string };
 			return `Echo: ${message}`;
 		},
 	},
